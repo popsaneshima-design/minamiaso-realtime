@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>南阿蘇鉄道 リアルタイム運行ボード</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: linear-gradient(170deg, #c7e3f2 0%, #e8f0d8 30%, #f5ecd5 65%, #ead9b8 100%);
+    background-attachment: fixed;
+    font-family: "Hiragino Maru Gothic ProN", "Hiragino Maru Gothic Pro", "Yu Gothic UI", "Meiryo", sans-serif;
+    color: #3a4a3a;
+    min-height: 100vh;
+  }
+  .train-icon { transition: transform 1s linear; }
+  @keyframes bounce { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-2px)} }
+  @keyframes sparkle { 0%,100%{opacity:.3;transform:scale(0.7)} 50%{opacity:1;transform:scale(1.3)} }
+  @keyframes float-cloud { 0%{transform:translateX(0)} 100%{transform:translateX(20px)} }
+  .running-bounce { animation: bounce 0.6s ease-in-out infinite; transform-origin: center bottom; transform-box: fill-box; }
+  .sparkle-pop { animation: sparkle 1.4s ease-in-out infinite; transform-origin: center; transform-box: fill-box; }
+  .pop-btn { transition: all 0.2s; }
+  .pop-btn:hover { transform: translateY(-2px) scale(1.04); }
+  .pop-btn:active { transform: translateY(0) scale(0.98); }
+  .train-card { transition: all 0.3s; }
+  .train-card:hover { transform: translateY(-2px); }
+  @keyframes toast-in { 0%{transform:translateX(120%) scale(0.8) rotate(8deg);opacity:0} 60%{transform:translateX(-8%) scale(1.05) rotate(-2deg);opacity:1} 100%{transform:translateX(0) scale(1) rotate(0)} }
+  @keyframes toast-out { to{transform:translateX(120%) scale(0.8);opacity:0} }
+  @keyframes pop-emoji { 0%,100%{transform:scale(1) rotate(0)} 50%{transform:scale(1.3) rotate(-12deg)} }
+  @keyframes pop-emoji-r { 0%,100%{transform:scale(1) rotate(0)} 50%{transform:scale(1.3) rotate(12deg)} }
+  .toast { animation: toast-in 0.5s cubic-bezier(0.34,1.56,0.64,1); }
+  .toast.fading { animation: toast-out 0.35s ease-in forwards; }
+  .toast-emoji { display:inline-block; animation: pop-emoji 0.7s ease-in-out infinite; }
+  .toast-emoji-r { display:inline-block; animation: pop-emoji-r 0.7s ease-in-out infinite; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+// イラスト上の駅座標（画像解析で検出した赤点位置 / 825x504）
+const STATIONS = [
+  { id: "tatsuno",        name: "立野",       km: 0,    xR: 0.1325, yR: 0.4240 },
+  { id: "choyo",          name: "長陽",       km: 2.8,  xR: 0.2382, yR: 0.5556 },
+  { id: "kase",           name: "加勢",       km: 4.4,  xR: 0.3061, yR: 0.5994 },
+  { id: "shimodajo",      name: "阿蘇下田城", km: 6.1,  xR: 0.3869, yR: 0.6280 },
+  { id: "shiramizukogen", name: "白水高原",   km: 8.0,  xR: 0.4424, yR: 0.6393 },
+  { id: "nakamatu",       name: "中松",       km: 9.6,  xR: 0.5455, yR: 0.6418 },
+  { id: "asoshirakawa",   name: "阿蘇白川",   km: 12.8, xR: 0.6324, yR: 0.6341 },
+  { id: "shirakawasui",   name: "白川水源",   km: 14.2, xR: 0.6817, yR: 0.6275 },
+  { id: "miharashidai",   name: "見晴台",     km: 15.8, xR: 0.7278, yR: 0.6058 },
+  { id: "takamori",       name: "高森",       km: 17.7, xR: 0.7788, yR: 0.4671 },
+];
+
+const toMin = (h,m) => h*60+m;
+const TRAINS_UP = [
+  { no:"2", type:"普通", stops:[{id:"takamori",t:toMin(6,0)},{id:"miharashidai",t:toMin(6,3)},{id:"shirakawasui",t:toMin(6,6)},{id:"asoshirakawa",t:toMin(6,8)},{id:"nakamatu",t:toMin(6,12)},{id:"shiramizukogen",t:toMin(6,16)},{id:"shimodajo",t:toMin(6,19)},{id:"kase",t:toMin(6,22)},{id:"choyo",t:toMin(6,24)},{id:"tatsuno",t:toMin(6,31)}]},
+  { no:"4", type:"普通(乗入)", stops:[{id:"takamori",t:toMin(6,26)},{id:"miharashidai",t:toMin(6,29)},{id:"shirakawasui",t:toMin(6,32)},{id:"asoshirakawa",t:toMin(6,34)},{id:"nakamatu",t:toMin(6,38)},{id:"shiramizukogen",t:toMin(6,42)},{id:"shimodajo",t:toMin(6,45)},{id:"kase",t:toMin(6,48)},{id:"choyo",t:toMin(6,50)},{id:"tatsuno",t:toMin(6,57)}]},
+  { no:"6", type:"普通(乗入)", stops:[{id:"takamori",t:toMin(8,23)},{id:"miharashidai",t:toMin(8,26)},{id:"shirakawasui",t:toMin(8,29)},{id:"asoshirakawa",t:toMin(8,31)},{id:"nakamatu",t:toMin(8,35)},{id:"shiramizukogen",t:toMin(8,39)},{id:"shimodajo",t:toMin(8,42)},{id:"kase",t:toMin(8,45)},{id:"choyo",t:toMin(8,47)},{id:"tatsuno",t:toMin(8,54)}]},
+  { no:"8002", type:"普通", seasonal:true, stops:[{id:"takamori",t:toMin(8,50)},{id:"miharashidai",t:toMin(8,53)},{id:"shirakawasui",t:toMin(8,56)},{id:"asoshirakawa",t:toMin(8,58)},{id:"nakamatu",t:toMin(9,2)},{id:"shiramizukogen",t:toMin(9,6)},{id:"shimodajo",t:toMin(9,9)},{id:"kase",t:toMin(9,12)},{id:"choyo",t:toMin(9,14)},{id:"tatsuno",t:toMin(9,21)}]},
+  { no:"ゆうすげ2号", type:"トロッコ", seasonal:true, stops:[{id:"takamori",t:toMin(9,40)},{id:"shirakawasui",t:toMin(9,50)},{id:"asoshirakawa",t:toMin(9,52)},{id:"nakamatu",t:toMin(10,2)},{id:"shimodajo",t:toMin(10,12)},{id:"choyo",t:toMin(10,19)},{id:"tatsuno",t:toMin(10,31)}]},
+  { no:"8", type:"普通", stops:[{id:"takamori",t:toMin(10,28)},{id:"miharashidai",t:toMin(10,31)},{id:"shirakawasui",t:toMin(10,34)},{id:"asoshirakawa",t:toMin(10,36)},{id:"nakamatu",t:toMin(10,40)},{id:"shiramizukogen",t:toMin(10,44)},{id:"shimodajo",t:toMin(10,47)},{id:"kase",t:toMin(10,50)},{id:"choyo",t:toMin(10,52)},{id:"tatsuno",t:toMin(10,59)}]},
+  { no:"10", type:"普通", stops:[{id:"takamori",t:toMin(13,0)},{id:"miharashidai",t:toMin(13,3)},{id:"shirakawasui",t:toMin(13,6)},{id:"asoshirakawa",t:toMin(13,8)},{id:"nakamatu",t:toMin(13,13)},{id:"shiramizukogen",t:toMin(13,16)},{id:"shimodajo",t:toMin(13,19)},{id:"kase",t:toMin(13,22)},{id:"choyo",t:toMin(13,24)},{id:"tatsuno",t:toMin(13,32)}]},
+  { no:"ゆうすげ4号", type:"トロッコ", seasonal:true, stops:[{id:"takamori",t:toMin(13,40)},{id:"shirakawasui",t:toMin(13,49)},{id:"asoshirakawa",t:toMin(13,51)},{id:"nakamatu",t:toMin(14,2)},{id:"shimodajo",t:toMin(14,11)},{id:"choyo",t:toMin(14,17)},{id:"tatsuno",t:toMin(14,29)}]},
+  { no:"12", type:"普通", stops:[{id:"takamori",t:toMin(14,34)},{id:"miharashidai",t:toMin(14,37)},{id:"shirakawasui",t:toMin(14,40)},{id:"asoshirakawa",t:toMin(14,42)},{id:"nakamatu",t:toMin(14,46)},{id:"shiramizukogen",t:toMin(14,50)},{id:"shimodajo",t:toMin(14,53)},{id:"kase",t:toMin(14,56)},{id:"choyo",t:toMin(14,58)},{id:"tatsuno",t:toMin(15,5)}]},
+  { no:"14", type:"普通", stops:[{id:"takamori",t:toMin(16,40)},{id:"miharashidai",t:toMin(16,43)},{id:"shirakawasui",t:toMin(16,46)},{id:"asoshirakawa",t:toMin(16,48)},{id:"nakamatu",t:toMin(16,52)},{id:"shiramizukogen",t:toMin(16,56)},{id:"shimodajo",t:toMin(16,59)},{id:"kase",t:toMin(17,2)},{id:"choyo",t:toMin(17,4)},{id:"tatsuno",t:toMin(17,11)}]},
+  { no:"16", type:"普通", stops:[{id:"takamori",t:toMin(17,44)},{id:"miharashidai",t:toMin(17,47)},{id:"shirakawasui",t:toMin(17,50)},{id:"asoshirakawa",t:toMin(17,52)},{id:"nakamatu",t:toMin(17,57)},{id:"shiramizukogen",t:toMin(18,0)},{id:"shimodajo",t:toMin(18,3)},{id:"kase",t:toMin(18,6)},{id:"choyo",t:toMin(18,9)},{id:"tatsuno",t:toMin(18,15)}]},
+  { no:"18", type:"普通", stops:[{id:"takamori",t:toMin(18,46)},{id:"miharashidai",t:toMin(18,49)},{id:"shirakawasui",t:toMin(18,52)},{id:"asoshirakawa",t:toMin(18,54)},{id:"nakamatu",t:toMin(18,59)},{id:"shiramizukogen",t:toMin(19,2)},{id:"shimodajo",t:toMin(19,5)},{id:"kase",t:toMin(19,8)},{id:"choyo",t:toMin(19,11)},{id:"tatsuno",t:toMin(19,17)}]},
+  { no:"20", type:"普通", stops:[{id:"takamori",t:toMin(19,31)},{id:"miharashidai",t:toMin(19,34)},{id:"shirakawasui",t:toMin(19,37)},{id:"asoshirakawa",t:toMin(19,39)},{id:"nakamatu",t:toMin(19,44)},{id:"shiramizukogen",t:toMin(19,47)},{id:"shimodajo",t:toMin(19,50)},{id:"kase",t:toMin(19,53)},{id:"choyo",t:toMin(19,56)},{id:"tatsuno",t:toMin(20,2)}]},
+  { no:"22", type:"普通", stops:[{id:"takamori",t:toMin(20,49)},{id:"miharashidai",t:toMin(20,52)},{id:"shirakawasui",t:toMin(20,55)},{id:"asoshirakawa",t:toMin(20,57)},{id:"nakamatu",t:toMin(21,2)},{id:"shiramizukogen",t:toMin(21,5)},{id:"shimodajo",t:toMin(21,8)},{id:"kase",t:toMin(21,11)},{id:"choyo",t:toMin(21,14)},{id:"tatsuno",t:toMin(21,20)}]},
+];
+const TRAINS_DOWN = [
+  { no:"3", type:"普通", stops:[{id:"tatsuno",t:toMin(7,19)},{id:"choyo",t:toMin(7,26)},{id:"kase",t:toMin(7,28)},{id:"shimodajo",t:toMin(7,31)},{id:"shiramizukogen",t:toMin(7,35)},{id:"nakamatu",t:toMin(7,38)},{id:"asoshirakawa",t:toMin(7,43)},{id:"shirakawasui",t:toMin(7,45)},{id:"miharashidai",t:toMin(7,49)},{id:"takamori",t:toMin(7,52)}]},
+  { no:"5", type:"普通(乗入)", stops:[{id:"tatsuno",t:toMin(7,44)},{id:"choyo",t:toMin(7,51)},{id:"kase",t:toMin(7,53)},{id:"shimodajo",t:toMin(7,56)},{id:"shiramizukogen",t:toMin(7,59)},{id:"nakamatu",t:toMin(8,2)},{id:"asoshirakawa",t:toMin(8,7)},{id:"shirakawasui",t:toMin(8,9)},{id:"miharashidai",t:toMin(8,12)},{id:"takamori",t:toMin(8,15)}]},
+  { no:"7", type:"普通(乗入)", stops:[{id:"tatsuno",t:toMin(9,42)},{id:"choyo",t:toMin(9,50)},{id:"kase",t:toMin(9,52)},{id:"shimodajo",t:toMin(9,55)},{id:"shiramizukogen",t:toMin(9,58)},{id:"nakamatu",t:toMin(10,2)},{id:"asoshirakawa",t:toMin(10,7)},{id:"shirakawasui",t:toMin(10,9)},{id:"miharashidai",t:toMin(10,12)},{id:"takamori",t:toMin(10,15)}]},
+  { no:"8003", type:"普通", seasonal:true, stops:[{id:"tatsuno",t:toMin(11,8)},{id:"choyo",t:toMin(11,15)},{id:"kase",t:toMin(11,17)},{id:"shimodajo",t:toMin(11,20)},{id:"shiramizukogen",t:toMin(11,24)},{id:"nakamatu",t:toMin(11,27)},{id:"asoshirakawa",t:toMin(11,32)},{id:"shirakawasui",t:toMin(11,34)},{id:"miharashidai",t:toMin(11,38)},{id:"takamori",t:toMin(11,41)}]},
+  { no:"ゆうすげ3号", type:"トロッコ", seasonal:true, stops:[{id:"tatsuno",t:toMin(11,30)},{id:"choyo",t:toMin(11,43)},{id:"shimodajo",t:toMin(11,49)},{id:"nakamatu",t:toMin(11,59)},{id:"asoshirakawa",t:toMin(12,9)},{id:"shirakawasui",t:toMin(12,11)},{id:"takamori",t:toMin(12,21)}]},
+  { no:"9", type:"普通", stops:[{id:"tatsuno",t:toMin(12,0)},{id:"choyo",t:toMin(12,10)},{id:"kase",t:toMin(12,12)},{id:"shimodajo",t:toMin(12,16)},{id:"shiramizukogen",t:toMin(12,19)},{id:"nakamatu",t:toMin(12,26)},{id:"asoshirakawa",t:toMin(12,31)},{id:"shirakawasui",t:toMin(12,33)},{id:"miharashidai",t:toMin(12,36)},{id:"takamori",t:toMin(12,40)}]},
+  { no:"11", type:"普通", stops:[{id:"tatsuno",t:toMin(13,41)},{id:"choyo",t:toMin(13,49)},{id:"kase",t:toMin(13,51)},{id:"shimodajo",t:toMin(13,54)},{id:"shiramizukogen",t:toMin(13,58)},{id:"nakamatu",t:toMin(14,1)},{id:"asoshirakawa",t:toMin(14,6)},{id:"shirakawasui",t:toMin(14,8)},{id:"miharashidai",t:toMin(14,12)},{id:"takamori",t:toMin(14,15)}]},
+  { no:"13", type:"普通", stops:[{id:"tatsuno",t:toMin(15,14)},{id:"choyo",t:toMin(15,22)},{id:"kase",t:toMin(15,24)},{id:"shimodajo",t:toMin(15,27)},{id:"shiramizukogen",t:toMin(15,31)},{id:"nakamatu",t:toMin(15,34)},{id:"asoshirakawa",t:toMin(15,39)},{id:"shirakawasui",t:toMin(15,41)},{id:"miharashidai",t:toMin(15,45)},{id:"takamori",t:toMin(15,48)}]},
+  { no:"ゆうすげ5号", type:"トロッコ", seasonal:true, stops:[{id:"tatsuno",t:toMin(15,35)},{id:"choyo",t:toMin(15,48)},{id:"shimodajo",t:toMin(15,54)},{id:"nakamatu",t:toMin(16,4)},{id:"asoshirakawa",t:toMin(16,13)},{id:"shirakawasui",t:toMin(16,16)},{id:"takamori",t:toMin(16,25)}]},
+  { no:"15", type:"普通", stops:[{id:"tatsuno",t:toMin(17,38)},{id:"choyo",t:toMin(17,45)},{id:"kase",t:toMin(17,47)},{id:"shimodajo",t:toMin(17,50)},{id:"shiramizukogen",t:toMin(17,54)},{id:"nakamatu",t:toMin(17,57)},{id:"asoshirakawa",t:toMin(18,2)},{id:"shirakawasui",t:toMin(18,4)},{id:"miharashidai",t:toMin(18,8)},{id:"takamori",t:toMin(18,11)}]},
+  { no:"17", type:"普通", stops:[{id:"tatsuno",t:toMin(18,41)},{id:"choyo",t:toMin(18,48)},{id:"kase",t:toMin(18,50)},{id:"shimodajo",t:toMin(18,53)},{id:"shiramizukogen",t:toMin(18,56)},{id:"nakamatu",t:toMin(18,59)},{id:"asoshirakawa",t:toMin(19,4)},{id:"shirakawasui",t:toMin(19,6)},{id:"miharashidai",t:toMin(19,10)},{id:"takamori",t:toMin(19,13)}]},
+  { no:"19", type:"普通", stops:[{id:"tatsuno",t:toMin(19,25)},{id:"choyo",t:toMin(19,32)},{id:"kase",t:toMin(19,34)},{id:"shimodajo",t:toMin(19,37)},{id:"shiramizukogen",t:toMin(19,41)},{id:"nakamatu",t:toMin(19,44)},{id:"asoshirakawa",t:toMin(19,49)},{id:"shirakawasui",t:toMin(19,51)},{id:"miharashidai",t:toMin(19,55)},{id:"takamori",t:toMin(19,58)}]},
+  { no:"21", type:"普通", stops:[{id:"tatsuno",t:toMin(20,43)},{id:"choyo",t:toMin(20,50)},{id:"kase",t:toMin(20,52)},{id:"shimodajo",t:toMin(20,55)},{id:"shiramizukogen",t:toMin(20,59)},{id:"nakamatu",t:toMin(21,2)},{id:"asoshirakawa",t:toMin(21,7)},{id:"shirakawasui",t:toMin(21,9)},{id:"miharashidai",t:toMin(21,13)},{id:"takamori",t:toMin(21,16)}]},
+  { no:"23", type:"普通", stops:[{id:"tatsuno",t:toMin(21,49)},{id:"choyo",t:toMin(21,57)},{id:"kase",t:toMin(21,59)},{id:"shimodajo",t:toMin(22,2)},{id:"shiramizukogen",t:toMin(22,5)},{id:"nakamatu",t:toMin(22,9)},{id:"asoshirakawa",t:toMin(22,14)},{id:"shirakawasui",t:toMin(22,16)},{id:"miharashidai",t:toMin(22,20)},{id:"takamori",t:toMin(22,23)}]},
+];
+
+const ST_BY_ID = Object.fromEntries(STATIONS.map(s=>[s.id,s]));
+
+// 各駅の遊び心メッセージ素材
+const STATION_INFO = {
+  tatsuno:        { emoji:"🌋", flavor:["立野峡谷の玄関口！","JR豊肥本線とつながってるよ"] },
+  choyo:          { emoji:"🌳", flavor:["第一白川橋りょう手前〜","秘境感あふれる山あい"] },
+  kase:           { emoji:"🌾", flavor:["のどかな田んぼの中〜","俵山トンネル方面"] },
+  shimodajo:      { emoji:"♨️", flavor:["ふれあい温泉でひとっ風呂♨️","お城跡の駅"] },
+  shiramizukogen: { emoji:"💧", flavor:["水の生まれる里💧","駅舎カフェあるよ☕"] },
+  nakamatu:       { emoji:"🌽", flavor:["南阿蘇のど真ん中！","駅前は田園ひろがる〜"] },
+  asoshirakawa:   { emoji:"🌸", flavor:["一心行の桜の最寄り駅🌸","春は満開だよ〜"] },
+  shirakawasui:   { emoji:"⛲", flavor:["湧き水の名所⛲","お水汲んでいかれませ〜"] },
+  miharashidai:   { emoji:"🌄", flavor:["阿蘇五岳の絶景ポイント！","写真スポット📸"] },
+  takamori:       { emoji:"🏔", flavor:["高千穂方面の玄関口","湧水トンネルあるよ"] },
+};
+const pickFlavor=(id)=>{const f=STATION_INFO[id]?.flavor||[""];return f[Math.floor(Math.random()*f.length)];};
+
+// 区間ごとの経由点（線路の曲線部分）。STATIONS順方向（立野→高森）で定義
+const LEG_VIA = {
+  "tatsuno-choyo": [
+    { xR: 0.1515, yR: 0.4583 },
+    { xR: 0.1636, yR: 0.4722 },
+    { xR: 0.1770, yR: 0.4901 },
+    { xR: 0.1891, yR: 0.5060 },
+    { xR: 0.2024, yR: 0.5198 },
+    { xR: 0.2145, yR: 0.5317 },
+    { xR: 0.2267, yR: 0.5417 },
+  ],
+  "miharashidai-takamori": [
+    { xR: 0.7370, yR: 0.5952 },
+    { xR: 0.7455, yR: 0.5873 },
+    { xR: 0.7539, yR: 0.5754 },
+    { xR: 0.7612, yR: 0.5635 },
+    { xR: 0.7673, yR: 0.5496 },
+    { xR: 0.7721, yR: 0.5337 },
+    { xR: 0.7758, yR: 0.5159 },
+    { xR: 0.7782, yR: 0.4960 },
+    { xR: 0.7794, yR: 0.4821 },
+  ],
+};
+
+// 区間の経由点付きポイント列（fromからtoまで）
+function legPoints(fromId, toId){
+  const fwd=LEG_VIA[`${fromId}-${toId}`];
+  const rev=LEG_VIA[`${toId}-${fromId}`];
+  const from=ST_BY_ID[fromId],to=ST_BY_ID[toId];
+  let mids=[];
+  if(fwd)mids=fwd;
+  else if(rev)mids=[...rev].reverse();
+  return [{xR:from.xR,yR:from.yR},...mids,{xR:to.xR,yR:to.yR}];
+}
+
+function isTrokkoDay(d){const mo=d.getMonth()+1,day=d.getDate(),dow=d.getDay(),we=dow===0||dow===6,inR=(m1,d1,m2,d2)=>{const c=mo*100+day;return c>=m1*100+d1&&c<=m2*100+d2;};if(mo>=3&&mo<=11){if(inR(3,14,11,30)&&we)return true;if(inR(3,20,4,5)||inR(4,29,5,6)||inR(7,18,8,23)||inR(8,27,8,28)||inR(9,3,9,4)||inR(9,10,9,11)||inR(9,17,9,25))return true;}return false;}
+function getPos(train,nm){const s=train.stops,f=s[0].t,l=s[s.length-1].t;if(nm<f)return{status:"before",fromIdx:0,toIdx:1,ratio:0};if(nm>=l)return{status:"done",fromIdx:s.length-2,toIdx:s.length-1,ratio:1};for(let i=0;i<s.length-1;i++){if(nm>=s[i].t&&nm<s[i+1].t){return{status:"running",fromIdx:i,toIdx:i+1,ratio:(nm-s[i].t)/(s[i+1].t-s[i].t)};}}return{status:"done",fromIdx:s.length-2,toIdx:s.length-1,ratio:1};}
+function fmt(m){const h=Math.floor(m/60)%24,mn=Math.floor(m%60);return`${String(h).padStart(2,'0')}:${String(mn).padStart(2,'0')}`;}
+function nearTrains(trains,nm,trokko){const act=trains.filter(t=>!(t.seasonal&&!trokko));return[...act.filter(t=>getPos(t,nm).status==="running"),...act.filter(t=>{const p=getPos(t,nm);return p.status==="before"&&t.stops[0].t-nm<=10;})];}
+
+// 地図の自然色に合わせたパレット（電車=青系、汽車=赤）
+const C = {
+  upRun: "#2a5a9a",      // 深青（上り電車）
+  upWait: "#7ab8d4",     // 空色
+  downRun: "#4a85cc",    // 中青（下り電車）
+  downWait: "#a8c4dc",   // 淡青
+  trokko: "#c14040",     // 朱赤（汽車）
+  done: "#a89880",       // 砂色
+  text: "#3a4a3a",       // 深森緑
+  textSoft: "#7a7060",   // 渋茶
+  cream: "#faf2dc",      // 紙色
+  forestDark: "#3a5a2a", // 山陰
+  earth: "#8b6f47",      // 大地
+};
+
+function App(){
+  const [now,setNow]=useState(new Date());
+  const [showAll,setShowAll]=useState(false);
+  const [tooltip,setTooltip]=useState(null);
+  const [imgLoaded,setImgLoaded]=useState(false);
+  const [imgAspect,setImgAspect]=useState(551/982);
+  const [cW,setCW]=useState(window.innerWidth-28);
+  const [toasts,setToasts]=useState([]);
+  const [stHover,setStHover]=useState(null);
+  const prevStRef=useRef({});
+  const initRef=useRef(false);
+
+  useEffect(()=>{
+    const id=setInterval(()=>setNow(new Date()),1000);
+    return()=>clearInterval(id);
+  },[]);
+
+  // 古いトーストの掃除はnow更新時に併せて行う（独自タイマーにしない）
+
+  useEffect(()=>{
+    const upd=()=>{const el=document.getElementById("mc");if(el)setCW(el.offsetWidth);};
+    upd();window.addEventListener("resize",upd);return()=>window.removeEventListener("resize",upd);
+  },[]);
+
+  const nm=now.getHours()*60+now.getMinutes()+now.getSeconds()/60+now.getMilliseconds()/60000;
+  const trokko=isTrokkoDay(now);
+
+  // 列車の状態変化を検出してトーストを発火（毎秒チェック、エラーで列車描画を止めない）
+  useEffect(()=>{
+    try{
+      const events=[];
+      const all=[...TRAINS_UP.map(t=>({t,dir:"up"})),...TRAINS_DOWN.map(t=>({t,dir:"down"}))];
+      all.forEach(({t:train,dir})=>{
+        if(train.seasonal&&!trokko)return;
+        const pos=getPos(train,nm);
+        const isTr=train.type==="トロッコ";
+        const key=pos.status+"|"+pos.toIdx;
+        const prev=prevStRef.current[train.no];
+        if(initRef.current&&prev&&prev!==key){
+          const sp=prev.split("|");
+          const pStat=sp[0],pToIdx=parseInt(sp[1]);
+          if(pStat==="before"&&pos.status==="running"){
+            const sId=train.stops[0].id;
+            const next=ST_BY_ID[train.stops[1]?.id]?.name||"";
+            events.push({id:train.no+"-d-"+Date.now(),birth:Date.now(),
+              train,dir,isTr,kind:"depart",sId,
+              msg:`${ST_BY_ID[sId].name}駅 出発進行〜！次は${next}🚂💨`});
+          }else if(pStat==="running"&&pos.status==="running"&&pToIdx<pos.toIdx){
+            const sId=train.stops[pToIdx]?.id;
+            if(sId){
+              const info=STATION_INFO[sId];
+              events.push({id:train.no+"-a-"+pToIdx+"-"+Date.now(),birth:Date.now(),
+                train,dir,isTr,kind:"arrive",sId,
+                msg:`${info?.emoji||"🚉"} ${ST_BY_ID[sId].name}駅 到着〜！${pickFlavor(sId)}`});
+            }
+          }else if(pStat==="running"&&pos.status==="done"){
+            const sId=train.stops[train.stops.length-1].id;
+            events.push({id:train.no+"-f-"+Date.now(),birth:Date.now(),
+              train,dir,isTr,kind:"final",sId,
+              msg:`🎉 終点${ST_BY_ID[sId].name}駅！${isTr?"トロッコの旅":train.no+" の旅"}おつかれさま✨`});
+          }
+        }
+        prevStRef.current[train.no]=key;
+      });
+      initRef.current=true;
+      if(events.length>0){
+        const cutoff=Date.now()-6000;
+        setToasts(prev=>[...events,...prev.filter(t=>t.birth>cutoff)].slice(0,5));
+      }
+    }catch(e){console.error("toast detect error",e);}
+  },[now]);
+  const upT=showAll?TRAINS_UP.filter(t=>!t.seasonal||trokko):nearTrains(TRAINS_UP,nm,trokko);
+  const dnT=showAll?TRAINS_DOWN.filter(t=>!t.seasonal||trokko):nearTrains(TRAINS_DOWN,nm,trokko);
+
+  const dispH=cW*imgAspect;
+
+  // 画像座標へ変換
+  const px=(xR)=>cW*xR;
+  const py=(yR)=>dispH*yR;
+
+  // 列車の現在位置・進行方向角度を計算（経由点を考慮した折れ線上を弧長で進む）
+  function trainPlacement(train,nm,upOffset){
+    const pos=getPos(train,nm);
+    const fromSt=ST_BY_ID[train.stops[pos.fromIdx].id];
+    const toSt=ST_BY_ID[train.stops[pos.toIdx].id];
+    const polyR=legPoints(fromSt.id,toSt.id);
+    const poly=polyR.map(p=>({x:px(p.xR),y:py(p.yR)}));
+    const segLens=[];let total=0;
+    for(let i=1;i<poly.length;i++){const d=Math.hypot(poly[i].x-poly[i-1].x,poly[i].y-poly[i-1].y);segLens.push(d);total+=d;}
+    let r=pos.ratio;if(pos.status==="before")r=0;if(pos.status==="done")r=1;
+    const target=r*total;
+    let acc=0,segIdx=0,segR=0;
+    for(let i=0;i<segLens.length;i++){
+      if(target<=acc+segLens[i]||i===segLens.length-1){segIdx=i;segR=segLens[i]>0?(target-acc)/segLens[i]:0;break;}
+      acc+=segLens[i];
+    }
+    const p0=poly[segIdx],p1=poly[segIdx+1];
+    let cx=p0.x+(p1.x-p0.x)*segR;
+    let cy=p0.y+(p1.y-p0.y)*segR;
+    const dx=p1.x-p0.x,dy=p1.y-p0.y,len=Math.hypot(dx,dy)||1;
+    const ux=dx/len,uy=dy/len;
+    // 線路に垂直で「画面上側」に来る単位ベクトルへ寄せる（進行方向に依らず常に上）
+    let perpX=-uy,perpY=ux;
+    if(perpY>0){perpX=-perpX;perpY=-perpY;}
+    cx+=perpX*upOffset;cy+=perpY*upOffset;
+    const angle=Math.atan2(dy,dx)*180/Math.PI;
+    return{x:cx,y:cy,angle,pos,fromSt,toSt};
+  }
+
+  function TrainIcon({x,y,angle,type,label,status,onEnter,onLeave}){
+    const isTr=type==="トロッコ";
+    const dirIsRight=Math.cos(angle*Math.PI/180)>=0;
+    const col=isTr?C.trokko:status==="running"?(dirIsRight?C.downRun:C.upRun):C.done;
+    const w=46,h=20;
+    return(
+      <g className="train-icon" transform={`translate(${x},${y})`} style={{cursor:"pointer"}} onMouseEnter={onEnter} onMouseLeave={onLeave}>
+        {status==="running"&&<>
+          <circle cx={0} cy={0} r={20} fill={col} opacity={0.16}><animate attributeName="r" values="13;24;13" dur="2s" repeatCount="indefinite"/></circle>
+        </>}
+        <g>
+          <g className={status==="running"?"running-bounce":""}>
+            {/* 影 */}
+            <ellipse cx={0} cy={h/2+4} rx={w/2-1} ry={2} fill="rgba(58,37,20,0.25)"/>
+            {/* 進行方向に応じて左右反転（上下反転せず） */}
+            <g transform={dirIsRight?"":"scale(-1,1)"}>
+            {isTr?(
+              // === 汽車（蒸気機関車スタイル・赤） ===
+              <g>
+                {/* キャブ（後部運転室） */}
+                <rect x={-w/2} y={-h/2-3} width={13} height={h+3} rx={2} fill="#7a3520" stroke="#fff8e8" strokeWidth={1.6}/>
+                <rect x={-w/2+2} y={-h/2-1} width={4} height={5} rx={0.8} fill="#3a1f15"/>
+                <rect x={-w/2+8} y={-h/2-1} width={3} height={5} rx={0.8} fill="#3a1f15"/>
+                {/* ボイラー本体 */}
+                <rect x={-w/2+11} y={-h/2+2} width={w-15} height={h-4} rx={4} fill={col} stroke="#fff8e8" strokeWidth={1.6}/>
+                {/* ボイラーのリング装飾 */}
+                <rect x={-w/2+18} y={-h/2+2} width={1.5} height={h-4} fill="#a06818" opacity={0.65}/>
+                <rect x={-w/2+26} y={-h/2+2} width={1.5} height={h-4} fill="#a06818" opacity={0.65}/>
+                {/* 蒸気ドーム */}
+                <ellipse cx={-w/2+15} cy={-h/2+1} rx={2.2} ry={2} fill="#a06818"/>
+                {/* 煙突 */}
+                <rect x={3.5} y={-h/2-4} width={5} height={6} fill="#2a1810"/>
+                <rect x={2} y={-h/2-5} width={8} height={2} rx={0.5} fill="#2a1810"/>
+                {/* 前面ヘッドライト */}
+                <circle cx={w/2-3} cy={-h/2+5} r={2} fill="#fff8e8"/>
+                <circle cx={w/2-3} cy={-h/2+5} r={1.2} fill="#ffe680"/>
+                {/* カウキャッチャー（前部スカート） */}
+                <path d={`M${w/2-3},${h/2-2} L${w/2+1},${h/2+1} L${w/2-3},${h/2+2} Z`} fill="#2a1810"/>
+                {/* 大型駆動輪 */}
+                <circle cx={-w/2+15} cy={h/2+1} r={4.2} fill="#2a1810" stroke="#7a3520" strokeWidth={1.2}/>
+                <circle cx={-w/2+15} cy={h/2+1} r={1.5} fill="#fff8e8"/>
+                <circle cx={-w/2+25} cy={h/2+1} r={4.2} fill="#2a1810" stroke="#7a3520" strokeWidth={1.2}/>
+                <circle cx={-w/2+25} cy={h/2+1} r={1.5} fill="#fff8e8"/>
+                {/* 駆動ロッド */}
+                <line x1={-w/2+15} y1={h/2+1} x2={-w/2+25} y2={h/2+1} stroke="#5a2510" strokeWidth={1.2}/>
+                {/* 小型前輪 */}
+                <circle cx={w/2-6} cy={h/2+1} r={2.5} fill="#2a1810"/>
+                <circle cx={w/2-6} cy={h/2+1} r={0.8} fill="#fff8e8"/>
+                {/* 小型後輪 */}
+                <circle cx={-w/2+5} cy={h/2+1} r={2.5} fill="#2a1810"/>
+                <circle cx={-w/2+5} cy={h/2+1} r={0.8} fill="#fff8e8"/>
+              </g>
+            ):(
+              // === 旅客車（🚃スタイル） ===
+              <g>
+                {/* 屋根（濃色帯） */}
+                <rect x={-w/2-1} y={-h/2-2} width={w+2} height={4.5} rx={2} fill="rgba(0,0,0,0.32)"/>
+                {/* 車体 */}
+                <rect x={-w/2} y={-h/2+1.5} width={w} height={h-1.5} rx={3} fill={col} stroke="#fff8e8" strokeWidth={1.8}/>
+                {/* 窓 4つ並び */}
+                {[0,1,2,3].map(i=>(
+                  <rect key={i} x={-w/2+5+i*9.5} y={-h/2+5} width={7} height={6} rx={1} fill="#e8f0f8" stroke="rgba(0,0,0,0.2)" strokeWidth={0.4}/>
+                ))}
+                {/* ドア（左端） */}
+                <rect x={-w/2+1.5} y={-h/2+4} width={2} height={h-7} fill="rgba(0,0,0,0.3)" rx={0.4}/>
+                {/* 帯ライン（中央） */}
+                <line x1={-w/2+1} y1={h/2-3} x2={w/2-1} y2={h/2-3} stroke="rgba(255,248,232,0.6)" strokeWidth={0.8}/>
+                {/* ヘッドライト（前面右上） */}
+                <circle cx={w/2-3} cy={-h/2+5.5} r={1.6} fill="#fff8e8"/>
+                <circle cx={w/2-3} cy={-h/2+5.5} r={0.9} fill="#ffe680"/>
+                {/* 連結器（左端） */}
+                <rect x={-w/2-3} y={-1} width={3} height={2} fill="#3a2520"/>
+                {/* 4輪 */}
+                <circle cx={-w/2+10} cy={h/2} r={3} fill="#2a1810"/>
+                <circle cx={-w/2+10} cy={h/2} r={1.1} fill="#fff8e8"/>
+                <circle cx={-w/2+19} cy={h/2} r={3} fill="#2a1810"/>
+                <circle cx={-w/2+19} cy={h/2} r={1.1} fill="#fff8e8"/>
+                <circle cx={w/2-19} cy={h/2} r={3} fill="#2a1810"/>
+                <circle cx={w/2-19} cy={h/2} r={1.1} fill="#fff8e8"/>
+                <circle cx={w/2-10} cy={h/2} r={3} fill="#2a1810"/>
+                <circle cx={w/2-10} cy={h/2} r={1.1} fill="#fff8e8"/>
+              </g>
+            )}
+            </g>
+          </g>
+        </g>
+      </g>
+    );
+  }
+
+  function TrainCard({train,dir}){
+    const pos=getPos(train,nm),isTr=train.type==="トロッコ";
+    const dep=train.stops[0].t,arr=train.stops[train.stops.length-1].t,diff=Math.ceil(dep-nm);
+    const col=isTr?C.trokko:pos.status==="running"?(dir==="up"?C.upRun:C.downRun):pos.status==="before"?(dir==="up"?C.upWait:C.downWait):C.done;
+    const emoji=isTr?"🚂":pos.status==="running"?"🏃‍♀️":pos.status==="done"?"✅":"⏰";
+    return(
+      <div className="train-card" style={{background:`linear-gradient(135deg, ${col}28, ${col}10)`,border:`2.5px solid ${col}`,borderRadius:18,padding:"8px 12px",marginBottom:8,opacity:pos.status==="done"?0.55:1,boxShadow:`0 3px 0 ${col}55, 0 6px 14px ${col}22`}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <span style={{fontWeight:900,fontSize:14,color:col,textShadow:"0 1px 0 #fff"}}>{emoji} {train.no}</span>
+          <span style={{fontSize:10,background:col,padding:"3px 10px",borderRadius:14,color:"#fff",fontWeight:800,boxShadow:`0 2px 0 ${col}88`}}>
+            {pos.status==="running"?"走行中":pos.status==="done"?"到着済":diff<=60?`${diff}分後`:"出発前"}
+          </span>
+        </div>
+        <div style={{fontSize:11,color:C.textSoft,marginTop:3,fontWeight:600}}>{fmt(dep)} {dir==="up"?"高森":"立野"}発 → {fmt(arr)} {dir==="up"?"立野":"高森"}着</div>
+        {pos.status==="running"&&<div style={{fontSize:10,color:col,marginTop:2,fontWeight:700}}>📍 {ST_BY_ID[train.stops[pos.fromIdx].id]?.name} → {ST_BY_ID[train.stops[pos.toIdx].id]?.name}</div>}
+      </div>
+    );
+  }
+
+  // 線路パス（経由点を含む全駅間の折れ線）
+  const railPathPts=[];
+  for(let i=0;i<STATIONS.length-1;i++){
+    const pts=legPoints(STATIONS[i].id,STATIONS[i+1].id);
+    if(i===0)railPathPts.push(...pts);
+    else railPathPts.push(...pts.slice(1));
+  }
+  const railPath=railPathPts.map((p,i)=>`${i===0?"M":"L"}${px(p.xR)},${py(p.yR)}`).join(" ");
+
+  return(
+    <div style={{padding:14,minHeight:"100vh",position:"relative",overflow:"hidden"}}>
+      <div style={{position:"fixed",top:30,right:40,fontSize:34,opacity:0.3,pointerEvents:"none",animation:"float-cloud 4s ease-in-out infinite alternate"}}>☁️</div>
+      <div style={{position:"fixed",top:120,left:30,fontSize:26,opacity:0.25,pointerEvents:"none",animation:"float-cloud 5s ease-in-out infinite alternate-reverse"}}>☁️</div>
+      <div style={{position:"fixed",bottom:80,right:30,fontSize:22,opacity:0.45,pointerEvents:"none"}}>🌿</div>
+      <div style={{position:"fixed",top:300,left:60,fontSize:20,opacity:0.45,pointerEvents:"none"}}>🍃</div>
+      <div style={{position:"fixed",bottom:160,left:40,fontSize:24,opacity:0.4,pointerEvents:"none"}}>🌳</div>
+      <div style={{position:"fixed",top:200,right:80,fontSize:18,opacity:0.5,pointerEvents:"none"}}>🌼</div>
+
+      <div style={{background:"linear-gradient(135deg,#5a8a3a,#7ab068,#d4a730)",borderRadius:24,padding:"14px 18px",marginBottom:14,boxShadow:"0 6px 0 #3a5a2a, 0 10px 24px rgba(58,90,42,0.3)",position:"relative",overflow:"hidden"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8,position:"relative",zIndex:1}}>
+          <div>
+            <div style={{fontSize:22,fontWeight:900,color:"#fff8e8",letterSpacing:1,textShadow:"0 2px 0 #3a5a2a, 0 3px 6px rgba(0,0,0,0.2)"}}>🚂 南阿蘇鉄道</div>
+            <div style={{fontSize:11,color:"#fff8e8",fontWeight:700,marginTop:2,opacity:0.95}}>🌿 リアルタイム運行ボード 🌿</div>
+          </div>
+          <div style={{textAlign:"right",background:"rgba(255,248,230,0.3)",padding:"6px 14px",borderRadius:14,backdropFilter:"blur(4px)",border:"1.5px solid rgba(255,248,230,0.4)"}}>
+            <div style={{fontSize:26,fontWeight:900,color:"#fff8e8",fontVariantNumeric:"tabular-nums",textShadow:"0 2px 0 #3a5a2a"}}>
+              {String(now.getHours()).padStart(2,"0")}:{String(now.getMinutes()).padStart(2,"0")}<span style={{fontSize:18,opacity:0.85}}>:{String(now.getSeconds()).padStart(2,"0")}</span>
+            </div>
+            <div style={{fontSize:10,color:"#fff8e8",fontWeight:700}}>{now.getFullYear()}/{now.getMonth()+1}/{now.getDate()}</div>
+          </div>
+        </div>
+      </div>
+
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:12,alignItems:"center"}}>
+        <span style={{background:trokko?"linear-gradient(135deg,#d4a730,#c08818)":C.cream,border:`2.5px solid ${trokko?"#a07010":"#c5b8a0"}`,borderRadius:22,padding:"5px 14px",fontSize:12,color:trokko?"#fff8e8":C.textSoft,fontWeight:800,boxShadow:trokko?"0 3px 0 #8a5808":"0 3px 0 #c5b8a0"}}>
+          {trokko?"🚂 本日トロッコ運行日！":"💤 本日トロッコ運休日"}
+        </span>
+        <button className="pop-btn" onClick={()=>setShowAll(v=>!v)} style={{background:"linear-gradient(135deg,#7ab8d4,#5a8a3a)",border:"none",borderRadius:22,padding:"6px 18px",fontSize:12,color:"#fff8e8",cursor:"pointer",fontWeight:800,boxShadow:"0 3px 0 #3a5a2a",fontFamily:"inherit"}}>
+          {showAll?"🔍 近い列車のみ":"📋 全列車表示"}
+        </button>
+      </div>
+
+      <div id="mc" style={{position:"relative",borderRadius:24,overflow:"hidden",marginBottom:14,boxShadow:"0 6px 0 rgba(139,111,71,0.35), 0 10px 30px rgba(58,90,42,0.25)",border:"3px solid #fff8e8",minHeight:dispH}}>
+        <img src="https://www.mt-torokko.com/railwayguide/img/illust_ensenkanko.jpg" alt="沿線イラスト"
+          onLoad={(e)=>{setImgLoaded(true);setImgAspect(e.target.naturalHeight/e.target.naturalWidth);}}
+          onError={()=>setImgLoaded(true)}
+          style={{width:"100%",display:"block"}}/>
+        <svg style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",overflow:"visible"}} viewBox={`0 0 ${cW} ${dispH}`} preserveAspectRatio="none">
+            {/* 線路ハイライト（イラストの線路に重ねる） */}
+            <path d={railPath} stroke="rgba(255,248,232,0.7)" strokeWidth={6} fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+            <path d={railPath} stroke="rgba(208,90,58,0.75)" strokeWidth={2.5} fill="none" strokeLinecap="round" strokeLinejoin="round" strokeDasharray="6,4"/>
+            {/* 駅マーカー（ホバーで次便表示） */}
+            {STATIONS.map(st=>(
+              <g key={st.id} style={{cursor:"pointer"}}
+                 onMouseEnter={()=>setStHover(st.id)}
+                 onMouseLeave={()=>setStHover(null)}>
+                <circle cx={px(st.xR)} cy={py(st.yR)} r={6} fill="#fff8e8" stroke="#d05a3a" strokeWidth={2.5}/>
+                <circle cx={px(st.xR)} cy={py(st.yR)} r={2.5} fill="#d05a3a"/>
+                {/* 透明な大きいヒットエリア */}
+                <circle cx={px(st.xR)} cy={py(st.yR)} r={16} fill="transparent"/>
+                {stHover===st.id&&<circle cx={px(st.xR)} cy={py(st.yR)} r={10} fill="none" stroke="#d05a3a" strokeWidth={1.5} strokeDasharray="3,2" opacity={0.8}>
+                  <animate attributeName="r" values="9;13;9" dur="1.2s" repeatCount="indefinite"/>
+                </circle>}
+              </g>
+            ))}
+            {/* 上り列車（線路の左側＝進行方向の左に表示） */}
+            {upT.map(train=>{
+              const p=trainPlacement(train,nm,18);
+              return(<TrainIcon key={`u${train.no}`} x={p.x} y={p.y} angle={p.angle} type={train.type} label={train.no} status={p.pos.status}
+                onEnter={()=>setTooltip({train,pos:p.pos,dir:"up",x:p.x,y:p.y,fromSt:p.fromSt,toSt:p.toSt})} onLeave={()=>setTooltip(null)}/>);
+            })}
+            {/* 下り列車（線路の右側＝進行方向の左＝下り進行時の左側） */}
+            {dnT.map(train=>{
+              const p=trainPlacement(train,nm,18);
+              return(<TrainIcon key={`d${train.no}`} x={p.x} y={p.y} angle={p.angle} type={train.type} label={train.no} status={p.pos.status}
+                onEnter={()=>setTooltip({train,pos:p.pos,dir:"down",x:p.x,y:p.y,fromSt:p.fromSt,toSt:p.toSt})} onLeave={()=>setTooltip(null)}/>);
+            })}
+            {/* 駅ホバー: 次便ポップアップ */}
+            {stHover&&(()=>{
+              const st=ST_BY_ID[stHover];
+              const sx=px(st.xR),sy=py(st.yR);
+              const findArr=(arr)=>{const out=[];arr.forEach(t=>{if(t.seasonal&&!trokko)return;const stop=t.stops.find(s=>s.id===stHover);if(stop&&stop.t-nm>=-0.5)out.push({train:t,time:stop.t});});out.sort((a,b)=>a.time-b.time);return out.slice(0,2);};
+              const ups=findArr(TRAINS_UP);
+              const dns=findArr(TRAINS_DOWN);
+              const items=[];
+              if(ups.length){items.push({type:"hd",label:"⬆ 上り（→立野）",col:C.upRun});ups.forEach(x=>items.push({type:"tr",dir:"up",...x}));}
+              if(dns.length){items.push({type:"hd",label:"⬇ 下り（→高森）",col:C.downRun});dns.forEach(x=>items.push({type:"tr",dir:"down",...x}));}
+              if(items.length===0)items.push({type:"empty"});
+              const w=210,headerH=22,itemH=15,pad=7;
+              const h=headerH+pad+items.length*itemH+pad;
+              const px0=Math.max(6,Math.min(sx-w/2,cW-w-6));
+              const py0=sy>h+18?sy-h-12:sy+14;
+              return(<g style={{pointerEvents:"none"}}>
+                {/* 接続線 */}
+                <line x1={sx} y1={sy} x2={sx} y2={py0<sy?py0+h:py0} stroke="#d05a3a" strokeWidth={1.5} strokeDasharray="3,2" opacity={0.7}/>
+                {/* 影 */}
+                <rect x={px0+2} y={py0+3} width={w} height={h} rx={10} fill="rgba(58,74,58,0.25)"/>
+                {/* 本体 */}
+                <rect x={px0} y={py0} width={w} height={h} rx={10} fill="#fff8e8" stroke="#d05a3a" strokeWidth={2.2}/>
+                {/* ヘッダー帯 */}
+                <path d={`M${px0+10},${py0} L${px0+w-10},${py0} A10,10 0 0 1 ${px0+w},${py0+10} L${px0+w},${py0+headerH} L${px0},${py0+headerH} L${px0},${py0+10} A10,10 0 0 1 ${px0+10},${py0} Z`} fill="#d05a3a"/>
+                <text x={px0+w/2} y={py0+15} fontSize={11.5} fill="#fff8e8" fontWeight="900" textAnchor="middle">📍 {st.name}駅 ／ 次の発車</text>
+                {items.map((item,idx)=>{
+                  const yy=py0+headerH+pad+idx*itemH+11;
+                  if(item.type==="hd"){
+                    return(<text key={idx} x={px0+10} y={yy} fontSize={10} fill={item.col} fontWeight="800">{item.label}</text>);
+                  }
+                  if(item.type==="empty"){
+                    return(<text key={idx} x={px0+w/2} y={yy} fontSize={10.5} fill={C.textSoft} fontWeight="700" textAnchor="middle">本日の運行は終了しました 💤</text>);
+                  }
+                  const diff=Math.ceil(item.time-nm);
+                  const isTr=item.train.type==="トロッコ";
+                  const col=isTr?C.trokko:item.dir==="up"?C.upRun:C.downRun;
+                  const diffStr=diff<=0?"発車中":diff<60?`${diff}分後`:`${Math.floor(diff/60)}h${diff%60}m後`;
+                  const typeLabel=item.train.type==="普通(乗入)"?"乗入":item.train.type==="トロッコ"?"トロッコ":"普通";
+                  return(<g key={idx}>
+                    <text x={px0+12} y={yy} fontSize={11} fill={C.text} fontWeight="700">{isTr?"🚂":"🚃"}</text>
+                    <text x={px0+28} y={yy} fontSize={8.5} fill={C.textSoft} fontWeight="700">{typeLabel}</text>
+                    <text x={px0+72} y={yy} fontSize={11} fill={C.text} fontWeight="800" fontVariantNumeric="tabular-nums">{fmt(item.time)}</text>
+                    <text x={px0+w-12} y={yy} fontSize={10} fill={col} fontWeight="900" textAnchor="end">{diffStr}</text>
+                  </g>);
+                })}
+              </g>);
+            })()}
+            {tooltip&&(()=>{
+              const {train,pos,dir,x,y,fromSt,toSt}=tooltip;
+              const dep=train.stops[0].t,arr=train.stops[train.stops.length-1].t,diff=Math.ceil(dep-nm);
+              const isTr=train.type==="トロッコ";
+              const col=isTr?C.trokko:pos.status==="running"?(dir==="up"?C.upRun:C.downRun):C.done;
+              const bx=Math.min(Math.max(x-85,4),cW-174);
+              const by=Math.max(y-78,8);
+              return(<g style={{pointerEvents:"none"}}>
+                <rect x={bx} y={by} width={170} height={58} rx={12} fill="#fff" stroke={col} strokeWidth={2.5}/>
+                <text x={bx+10} y={by+17} fontSize={11} fill={col} fontWeight="900">{isTr?"🚂 ":""}{train.no}</text>
+                <text x={bx+10} y={by+31} fontSize={9.5} fill={C.text} fontWeight="600">{fmt(dep)} {dir==="up"?"高森":"立野"}発→{fmt(arr)} {dir==="up"?"立野":"高森"}着</text>
+                <text x={bx+10} y={by+46} fontSize={10} fill={col} fontWeight="800">{pos.status==="running"?`📍${fromSt?.name}→${toSt?.name}`:pos.status==="done"?"✅ 到着済":diff<=60?`⏰ 出発まで${diff}分`:"出発前"}</text>
+              </g>);
+            })()}
+        </svg>
+      </div>
+
+      <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:14,fontSize:10,background:"rgba(255,248,232,0.85)",padding:"8px 12px",borderRadius:18,border:"2px dashed #b08a5a"}}>
+        {[[C.upRun,"上り走行中","💗"],[C.upWait,"上り出発前","🩵"],[C.downRun,"下り走行中","🧡"],[C.downWait,"下り出発前","💜"],[C.trokko,"トロッコ","💛"],[C.done,"終了","🩶"]].map(([c,l])=>(
+          <div key={l} style={{display:"flex",alignItems:"center",gap:4}}>
+            <div style={{width:14,height:14,borderRadius:7,background:c,border:"2px solid #fff",boxShadow:`0 1px 0 ${c}`}}/>
+            <span style={{color:C.text,fontWeight:700}}>{l}</span>
+          </div>
+        ))}
+      </div>
+
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+        <div>
+          <div style={{fontSize:14,fontWeight:900,color:"#fff8e8",background:`linear-gradient(135deg,${C.upRun},${C.upWait})`,borderRadius:14,padding:"6px 12px",marginBottom:10,boxShadow:`0 3px 0 #1a3a6a`,textShadow:"0 1px 0 rgba(0,0,0,0.25)"}}>🚃 上り（高森→立野）</div>
+          {upT.map(t=><TrainCard key={t.no} train={t} dir="up"/>)}
+        </div>
+        <div>
+          <div style={{fontSize:14,fontWeight:900,color:"#fff8e8",background:`linear-gradient(135deg,${C.downRun},${C.downWait})`,borderRadius:14,padding:"6px 12px",marginBottom:10,boxShadow:`0 3px 0 #2a5588`,textShadow:"0 1px 0 rgba(0,0,0,0.25)"}}>🚃 下り（立野→高森）</div>
+          {dnT.map(t=><TrainCard key={t.no} train={t} dir="down"/>)}
+        </div>
+      </div>
+
+      <div style={{textAlign:"center",fontSize:10,color:C.textSoft,marginTop:14,fontWeight:700}}>
+        ✨ 1秒ごと自動更新 ／ 南阿蘇鉄道 2026年3月14日改正 ／ イラスト：南阿蘇鉄道 ✨
+      </div>
+
+      {/* リアルタイム トースト */}
+      <div style={{position:"fixed",top:14,right:14,zIndex:100,display:"flex",flexDirection:"column",gap:8,maxWidth:300,pointerEvents:"none"}}>
+        {toasts.filter(t=>Date.now()-t.birth<6000).map((t,idx)=>{
+          const age=Date.now()-t.birth;
+          const fading=age>5400;
+          const col=t.isTr?C.trokko:t.kind==="final"?"#ff5fa2":t.dir==="up"?C.upRun:C.downRun;
+          const borderCol=t.kind==="final"?"#ff8fb1":col;
+          return(
+            <div key={t.id} className={`toast${fading?" fading":""}`} style={{
+              background:"#fff",
+              border:`2.5px solid ${borderCol}`,
+              borderRadius:18,
+              padding:"7px 12px",
+              boxShadow:`0 4px 0 ${borderCol}66, 0 8px 18px ${borderCol}33`,
+              fontSize:11,
+              fontWeight:700,
+              color:"#4a3050",
+              position:"relative",
+            }}>
+              <div style={{display:"flex",gap:6,alignItems:"center",marginBottom:2}}>
+                <span style={{background:col,color:"#fff",padding:"2px 9px",borderRadius:11,fontSize:10,fontWeight:900,boxShadow:`0 2px 0 ${col}aa`}}>
+                  {t.isTr?"🚂":t.kind==="final"?"🎉":t.kind==="arrive"?"🛬":"🚂"} {t.train.no}
+                </span>
+                <span style={{fontSize:9,color:C.textSoft,fontWeight:700}}>
+                  {t.dir==="up"?"上り":"下り"}
+                </span>
+              </div>
+              <div style={{lineHeight:1.4,fontSize:11.5}}>
+                <span className={t.kind==="depart"?"toast-emoji-r":"toast-emoji"}>{t.msg.match(/^\S+/)?.[0]||""}</span>
+                {t.msg.replace(/^\S+/,"")}
+              </div>
+              {/* 三角の吹き出しシッポ */}
+              <div style={{position:"absolute",left:-8,top:18,width:0,height:0,borderTop:"8px solid transparent",borderBottom:"8px solid transparent",borderRight:`10px solid ${borderCol}`}}/>
+              <div style={{position:"absolute",left:-5,top:19,width:0,height:0,borderTop:"7px solid transparent",borderBottom:"7px solid transparent",borderRight:"9px solid #fff"}}/>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>

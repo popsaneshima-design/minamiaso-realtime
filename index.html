@@ -233,8 +233,8 @@ function App(){
       }
     }catch(e){console.error("toast detect error",e);}
   },[now]);
-  const upT=showAll?TRAINS_UP.filter(t=>!t.seasonal||trokko):nearTrains(TRAINS_UP,nm,trokko);
-  const dnT=showAll?TRAINS_DOWN.filter(t=>!t.seasonal||trokko):nearTrains(TRAINS_DOWN,nm,trokko);
+  const upT=showAll?TRAINS_UP.filter(t=>(!t.seasonal||trokko)&&getPos(t,nm).status!=="done"):nearTrains(TRAINS_UP,nm,trokko);
+  const dnT=showAll?TRAINS_DOWN.filter(t=>(!t.seasonal||trokko)&&getPos(t,nm).status!=="done"):nearTrains(TRAINS_DOWN,nm,trokko);
 
   const dispH=cW*imgAspect;
 
@@ -374,7 +374,7 @@ function App(){
             {pos.status==="running"?"走行中":pos.status==="done"?"到着済":diff<=60?`${diff}分後`:"出発前"}
           </span>
         </div>
-        <div style={{fontSize:11,color:C.textSoft,marginTop:3,fontWeight:600}}>{fmt(dep)} {dir==="up"?"高森":"立野"}発 → {fmt(arr)} {dir==="up"?"立野":"高森"}着</div>
+        <div style={{fontSize:11,color:C.textSoft,marginTop:3,fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{fmt(dep)} → {fmt(arr)}</div>
         {pos.status==="running"&&<div style={{fontSize:10,color:col,marginTop:2,fontWeight:700}}>📍 {ST_BY_ID[train.stops[pos.fromIdx].id]?.name} → {ST_BY_ID[train.stops[pos.toIdx].id]?.name}</div>}
       </div>
     );
@@ -390,19 +390,13 @@ function App(){
   const railPath=railPathPts.map((p,i)=>`${i===0?"M":"L"}${px(p.xR)},${py(p.yR)}`).join(" ");
 
   return(
-    <div style={{padding:14,minHeight:"100vh",position:"relative",overflow:"hidden"}}>
-      <div style={{position:"fixed",top:30,right:40,fontSize:34,opacity:0.3,pointerEvents:"none",animation:"float-cloud 4s ease-in-out infinite alternate"}}>☁️</div>
-      <div style={{position:"fixed",top:120,left:30,fontSize:26,opacity:0.25,pointerEvents:"none",animation:"float-cloud 5s ease-in-out infinite alternate-reverse"}}>☁️</div>
-      <div style={{position:"fixed",bottom:80,right:30,fontSize:22,opacity:0.45,pointerEvents:"none"}}>🌿</div>
-      <div style={{position:"fixed",top:300,left:60,fontSize:20,opacity:0.45,pointerEvents:"none"}}>🍃</div>
-      <div style={{position:"fixed",bottom:160,left:40,fontSize:24,opacity:0.4,pointerEvents:"none"}}>🌳</div>
-      <div style={{position:"fixed",top:200,right:80,fontSize:18,opacity:0.5,pointerEvents:"none"}}>🌼</div>
+    <div style={{padding:14,minHeight:"100vh",position:"relative"}}>
 
       <div style={{background:"linear-gradient(135deg,#5a8a3a,#7ab068,#d4a730)",borderRadius:24,padding:"14px 18px",marginBottom:14,boxShadow:"0 6px 0 #3a5a2a, 0 10px 24px rgba(58,90,42,0.3)",position:"relative",overflow:"hidden"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8,position:"relative",zIndex:1}}>
           <div>
             <div style={{fontSize:22,fontWeight:900,color:"#fff8e8",letterSpacing:1,textShadow:"0 2px 0 #3a5a2a, 0 3px 6px rgba(0,0,0,0.2)"}}>🚂 南阿蘇鉄道</div>
-            <div style={{fontSize:11,color:"#fff8e8",fontWeight:700,marginTop:2,opacity:0.95}}>🌿 リアルタイム運行ボード 🌿</div>
+            <div style={{fontSize:11,color:"#fff8e8",fontWeight:700,marginTop:2,opacity:0.9}}>リアルタイム運行ボード</div>
           </div>
           <div style={{textAlign:"right",background:"rgba(255,248,230,0.3)",padding:"6px 14px",borderRadius:14,backdropFilter:"blur(4px)",border:"1.5px solid rgba(255,248,230,0.4)"}}>
             <div style={{fontSize:26,fontWeight:900,color:"#fff8e8",fontVariantNumeric:"tabular-nums",textShadow:"0 2px 0 #3a5a2a"}}>
@@ -415,7 +409,7 @@ function App(){
 
       <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:12,alignItems:"center"}}>
         <span style={{background:trokko?"linear-gradient(135deg,#d4a730,#c08818)":C.cream,border:`2.5px solid ${trokko?"#a07010":"#c5b8a0"}`,borderRadius:22,padding:"5px 14px",fontSize:12,color:trokko?"#fff8e8":C.textSoft,fontWeight:800,boxShadow:trokko?"0 3px 0 #8a5808":"0 3px 0 #c5b8a0"}}>
-          {trokko?"🚂 本日トロッコ運行日！":"💤 本日トロッコ運休日"}
+          {trokko?"🚂 トロッコ運行日":"💤 トロッコ運休"}
         </span>
         <button className="pop-btn" onClick={()=>setShowAll(v=>!v)} style={{background:"linear-gradient(135deg,#7ab8d4,#5a8a3a)",border:"none",borderRadius:22,padding:"6px 18px",fontSize:12,color:"#fff8e8",cursor:"pointer",fontWeight:800,boxShadow:"0 3px 0 #3a5a2a",fontFamily:"inherit"}}>
           {showAll?"🔍 近い列車のみ":"📋 全列車表示"}
@@ -522,7 +516,7 @@ function App(){
       </div>
 
       <div style={{display:"flex",gap:8,flexWrap:"wrap",marginBottom:14,fontSize:10,background:"rgba(255,248,232,0.85)",padding:"8px 12px",borderRadius:18,border:"2px dashed #b08a5a"}}>
-        {[[C.upRun,"上り走行中","💗"],[C.upWait,"上り出発前","🩵"],[C.downRun,"下り走行中","🧡"],[C.downWait,"下り出発前","💜"],[C.trokko,"トロッコ","💛"],[C.done,"終了","🩶"]].map(([c,l])=>(
+        {[[C.upRun,"上り走行中"],[C.upWait,"上り出発前"],[C.downRun,"下り走行中"],[C.downWait,"下り出発前"],[C.trokko,"トロッコ"]].map(([c,l])=>(
           <div key={l} style={{display:"flex",alignItems:"center",gap:4}}>
             <div style={{width:14,height:14,borderRadius:7,background:c,border:"2px solid #fff",boxShadow:`0 1px 0 ${c}`}}/>
             <span style={{color:C.text,fontWeight:700}}>{l}</span>
@@ -542,7 +536,7 @@ function App(){
       </div>
 
       <div style={{textAlign:"center",fontSize:10,color:C.textSoft,marginTop:14,fontWeight:700}}>
-        ✨ 1秒ごと自動更新 ／ 南阿蘇鉄道 2026年3月14日改正 ／ イラスト：南阿蘇鉄道 ✨
+        南阿蘇鉄道 2026/3/14改正
       </div>
 
       {/* リアルタイム トースト */}
